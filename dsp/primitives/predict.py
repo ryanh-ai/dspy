@@ -120,19 +120,45 @@ def _generate(template: Template, **kwargs) -> Callable:
         completions: list[dict[str, Any]] = generator(prompt, **kwargs)
         completions: list[Example] = [template.extract(example, p) for p in completions]
 
-        # Find the completions that are unfinished.
+        # Find the completions that are most complete.
         field_names: list[str] = [field.input_variable for field in template.fields]
 
-        finished_completions = []
-        for completion in completions:
-            if all((completion.get(key, "") != "") for key in field_names):
-                finished_completions.append(completion)
-                continue
-            finished_completions.append(
-                extend_generation(completion, field_names, stage, max_depth, original_example),
+        last_field_idx = 0
+        for field_idx, key in enumerate(field_names):
+            completions_ = [
+                c for c in completions if key in c.keys() and c[key] is not None
+            ]
+
+            # Filter out completions that are missing fields that are present in at least one completion.
+            if len(completions_):
+                completions = completions_
+                last_field_idx = field_idx + 1
+
+        # If none of the completions is completed (i.e., none has the final field set).
+        if last_field_idx < len(field_names):
+            # Pick the first completion that has gone farthest.
+            completion = completions[0]
+            completion[field_names[last_field_idx]] = ""
+
+            # Recurse with greedy decoding and a shorter length.
+            max_tokens = kwargs.get("max_tokens", dsp.settings.lm.kwargs["max_tokens"])
+            max_tokens = min(max(75, max_tokens // 2), max_tokens)
+            new_kwargs = {
+                **kwargs,
+                "max_tokens": max_tokens,
+                "n": 1,
+                "temperature": 0.0,
+            }
+
+            assert max_depth > 0
+            return generate(template, **new_kwargs)(
+                completion,
+                stage=stage,
+                max_depth=max_depth - 1,
+                original_example=original_example,
             )
 
-        completions = Completions(finished_completions, template=template)
+        completions = Completions(completions, template=template)
         example = example.copy(completions=completions)
 
         if len(completions) == 1:

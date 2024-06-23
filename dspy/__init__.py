@@ -21,6 +21,8 @@ Mistral = dsp.Mistral
 Databricks = dsp.Databricks
 Cohere = dsp.Cohere
 ColBERTv2 = dsp.ColBERTv2
+ColBERTv2RerankerLocal = dsp.ColBERTv2RerankerLocal
+ColBERTv2RetrieverLocal = dsp.ColBERTv2RetrieverLocal
 Pyserini = dsp.PyseriniRetriever
 Clarifai = dsp.ClarifaiLLM
 CloudflareAI = dsp.CloudflareAI
@@ -47,6 +49,8 @@ AWSMeta = dsp.AWSMeta
 
 Watsonx = dsp.Watsonx
 PremAI = dsp.PremAI
+
+You = dsp.You
 
 configure = settings.configure
 context = settings.context

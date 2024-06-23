@@ -81,7 +81,10 @@ class Example:
 
         # return items that are in input_keys
         d = {key: self._store[key] for key in self._store if key in self._input_keys}
-        return type(self)(d)
+        # return type(self)(d)
+        new_instance = type(self)(base=d)
+        new_instance._input_keys = self._input_keys  # Preserve input_keys in new instance
+        return new_instance
 
     def labels(self):
         # return items that are NOT in input_keys

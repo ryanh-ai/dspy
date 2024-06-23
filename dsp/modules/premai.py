@@ -1,4 +1,5 @@
 import os
+import warnings
 from typing import Any, Optional
 
 import backoff
@@ -20,7 +21,7 @@ def backoff_hdlr(details) -> None:
 
     See more at: https://pypi.org/project/backoff/
     """
-    print(
+    print(  # noqa: T201
         "Backing off {wait:0.1f} seconds after {tries} tries calling function {target} with kwargs {kwargs}".format(
             **details,
         ),
@@ -45,15 +46,12 @@ def get_premai_api_key(api_key: Optional[str] = None) -> str:
 
 
 class PremAI(LM):
-    """Wrapper around Prem AI's API."""
-
     def __init__(
         self,
         project_id: int,
         model: Optional[str] = None,
         api_key: Optional[str] = None,
-        session_id: Optional[int] = None,
-        **kwargs,
+        **kwargs: dict,
     ) -> None:
         """Parameters
 
@@ -64,99 +62,119 @@ class PremAI(LM):
         api_key: Optional[str]
             Prem AI API key, to connect with the API. If not provided then it will check from env var by the name
                 PREMAI_API_KEY
-        session_id: Optional[int]
-            The ID of the session to use. It helps to track the chat history.
-        **kwargs: dict
-            Additional arguments to pass to the API provider
+        kwargs: Optional[dict] For any additional paramters
         """
-        model = "default" if model is None else model
-        super().__init__(model)
+        self.model = "default" if model is None else model
+        super().__init__(self.model)
         if premai_api_error == Exception:
             raise ImportError(
                 "Not loading Prem AI because it is not installed. Install it with `pip install premai`.",
             )
-        self.kwargs = kwargs if kwargs == {} else self.kwargs
 
         self.project_id = project_id
-        self.session_id = session_id
 
         api_key = get_premai_api_key(api_key=api_key)
         self.client = premai.Prem(api_key=api_key)
         self.provider = "premai"
         self.history: list[dict[str, Any]] = []
+        self.kwargs = kwargs if kwargs else {}
 
-        self.kwargs = {
-            "temperature": 0.17,
-            "max_tokens": 150,
-            **kwargs,
-        }
-        if session_id is not None:
-            self.kwargs["session_id"] = session_id
-
-        # However this is not recommended to change the model once
-        # deployed from launchpad
-
-        if model != "default":
-            self.kwargs["model"] = model
-
-    def _get_all_kwargs(self, **kwargs) -> dict:
-        other_kwargs = {
-            "seed": None,
-            "logit_bias": None,
-            "tools": None,
+    @property
+    def _default_params(self) -> dict[str, Any]:
+        default_kwargs = {
+            "temperature": None,
+            "max_tokens": None,
             "system_prompt": None,
-        }
-        all_kwargs = {
-            **self.kwargs,
-            **other_kwargs,
-            **kwargs,
+            "repositories": None,
         }
 
-        _keys_that_cannot_be_none = [
-            "system_prompt",
+        if self.model != "default":
+            default_kwargs["model_name"] = self.model
+
+        return default_kwargs
+
+    def _get_all_kwargs(self, **kwargs) -> dict[str, Any]:
+        kwargs_to_ignore = [
+            "top_p",
+            "tools",
             "frequency_penalty",
             "presence_penalty",
-            "tools",
+            "logit_bias",
+            "stop",
+            "seed",
         ]
+        keys_to_remove = []
+        kwargs = {**kwargs, **self.kwargs}
 
-        for key in _keys_that_cannot_be_none:
-            if all_kwargs.get(key) is None:
+        for key in kwargs:
+            if key in kwargs_to_ignore:
+                warnings.warn(f"WARNING: Parameter {key} is not supported in kwargs.", stacklevel=2)
+                keys_to_remove.append(key)
+
+        for key in keys_to_remove:
+            kwargs.pop(key)
+
+        all_kwargs = {**self._default_params, **kwargs}
+        for key in list(self._default_params.keys()):
+            if all_kwargs.get(key) is None or all_kwargs.get(key) == "":
                 all_kwargs.pop(key, None)
         return all_kwargs
 
-    def basic_request(self, prompt, **kwargs) -> str:
+    def basic_request(self, prompt, **kwargs) -> list[str]:
         """Handles retrieval of completions from Prem AI whilst handling API errors."""
         all_kwargs = self._get_all_kwargs(**kwargs)
-        messages = []
+        if "template_id" not in all_kwargs:
+            messages = [{"role": "user", "content": prompt}]
+        else:
+            template_id = all_kwargs["template_id"]
+            if (template_id is None) or (template_id == ""):
+                raise ValueError("Templates can not be None or ''")
+            if "params" not in all_kwargs:
+                raise KeyError(
+                    "Keyword argument: params must be present if template_id is present",
+                )
 
-        if "system_prompt" in all_kwargs:
-            messages.append({"role": "system", "content": all_kwargs["system_prompt"]})
-        messages.append({"role": "user", "content": prompt})
+            params = all_kwargs["params"]
+            if not isinstance(params, dict):
+                raise TypeError("params must be a dictionary")
 
+            messages = [
+                {
+                    "role": "user",
+                    "template_id": template_id,
+                    "params": params,
+                },
+            ]
+            kwargs["template_id"] = all_kwargs.get("template_id", None)
+            kwargs["params"] = all_kwargs.get("params", None)
+
+            all_kwargs.pop("template_id")
+            all_kwargs.pop("params")
+
+        kwargs = {**kwargs, **all_kwargs}
         response = self.client.chat.completions.create(
             project_id=self.project_id,
             messages=messages,
             **all_kwargs,
         )
-        if not response.choices:
-            raise premai_api_error("ChatResponse must have at least one candidate")
-
         content = response.choices[0].message.content
         if not content:
             raise premai_api_error("ChatResponse is none")
 
         output_text = content or ""
+        document_chunks = (
+            None if response.document_chunks is None else [chunk.to_dict() for chunk in response.document_chunks]
+        )
 
         self.history.append(
             {
                 "prompt": prompt,
                 "response": content,
-                "kwargs": all_kwargs,
-                "raw_kwargs": kwargs,
+                "document_chunks": document_chunks,
+                "kwargs": kwargs,
             },
         )
-
-        return output_text
+        return [output_text]
 
     @backoff.on_exception(
         backoff.expo,

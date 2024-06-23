@@ -1,10 +1,10 @@
 import datetime
 import textwrap
-from typing import Annotated, Generic, List, Literal, TypeVar
+from typing import Annotated, Any, Generic, List, Literal, Optional, TypeVar
 
 import pydantic
 import pytest
-from pydantic import AfterValidator, BaseModel, Field, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, Field, ValidationError, field_validator, model_validator
 
 import dspy
 from dspy.functional import FunctionalModule, TypedChainOfThought, TypedPredictor, cot, predictor
@@ -435,6 +435,69 @@ def test_regex_with_backend():
     with dspy.settings.context(backend=backend, lm=None, cache=False):
         predict = flight_information(email=email)
         assert predict == TravelInformation(origin="JFK", destination="LAX", date=datetime.date(2022, 12, 25))
+
+
+def test_custom_model_validate_json():
+    class Airport(BaseModel):
+        code: str = Field(pattern=r"^[A-Z]{3}$")
+        lat: float
+        lon: float
+
+    class TravelInformation(BaseModel):
+        origin: Airport
+        destination: Airport
+        date: datetime.date
+
+        @classmethod
+        def model_validate_json(
+            cls, json_data: str, *, strict: Optional[bool] = None, context: Optional[dict[str, Any]] = None
+        ) -> "TravelInformation":
+            try:
+                __tracebackhide__ = True
+                return cls.__pydantic_validator__.validate_json(json_data, strict=strict, context=context)
+            except ValidationError:
+                for substring_length in range(len(json_data), 1, -1):
+                    for start in range(len(json_data) - substring_length + 1):
+                        substring = json_data[start : start + substring_length]
+                        try:
+                            __tracebackhide__ = True
+                            res = cls.__pydantic_validator__.validate_json(substring, strict=strict, context=context)
+                            return res
+                        except ValidationError as exc:
+                            last_exc = exc
+                            pass
+            raise ValueError("Could not find valid json") from last_exc
+
+    @predictor
+    def flight_information(email: str) -> TravelInformation:
+        pass
+
+    email = textwrap.dedent(
+        """\
+        We're excited to welcome you aboard your upcoming flight from
+        John F. Kennedy International Airport (JFK) to Los Angeles International Airport (LAX)
+        on December 25, 2022. Here's everything you need to know before you take off: ...
+    """
+    )
+    lm = DummyLM(
+        [
+            # Example with a bad origin code.
+            (
+                "Here is your json: "
+                "{"
+                '"origin": {"code":"JFK", "lat":40.6446, "lon":-73.7797}, '
+                '"destination": {"code":"LAX", "lat":33.942791, "lon":-118.410042}, '
+                '"date": "2022-12-25"}'
+            ),
+        ]
+    )
+    dspy.settings.configure(lm=lm)
+
+    assert flight_information(email=email) == TravelInformation(
+        origin={"code": "JFK", "lat": 40.6446, "lon": -73.7797},
+        destination={"code": "LAX", "lat": 33.942791, "lon": -118.410042},
+        date=datetime.date(2022, 12, 25),
+    )
 
 
 def test_raises():
@@ -917,7 +980,8 @@ def test_custom_reasoning_field():
     assert isinstance(output.question, Question)
     assert output.question.value == expected
 
-    assert lm.get_convo(-1) == textwrap.dedent("""\
+    assert lm.get_convo(-1) == textwrap.dedent(
+        """\
         Given the fields `topic`, produce the fields `question`.
 
         ---
@@ -932,7 +996,8 @@ def test_custom_reasoning_field():
 
         Topic: Physics
         Custom Reasoning: Let's break this down. To generate a question about Thoughts
-        Question: {"value": "What is the speed of light?"}""")
+        Question: {"value": "What is the speed of light?"}"""
+    )
 
 
 def test_generic_signature():
