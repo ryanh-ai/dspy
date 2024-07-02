@@ -17,6 +17,7 @@ _cachedir = os.environ.get("DSP_CACHEDIR") or str(Path.home() / ".joblib_cache")
 _cache_memory = Memory(_cachedir, verbose=0)
 
 
+
 class BaseBackend(BaseModel, ABC):
     history: list[Completions] = Field(default_factory=list, exclude=True)
     attempts: int = Field(default=1)
@@ -116,7 +117,7 @@ class BaseBackend(BaseModel, ABC):
 
         return completions
 
-    def inspect_history(self, element: int) -> None:
+    def inspect_history_debug(self, element: int) -> None:
         """Index into the backend historical completions, and pretty print all details."""
 
         # Print Input Kwargs
@@ -129,6 +130,41 @@ class BaseBackend(BaseModel, ABC):
         print("\n===COMPLETIONS===")  # noqa:T201
         print(self.history[-1])  # noqa:T201
 
+    def _render_completion(self, completion: Completions):
+        text_out = completion.input_kwargs['messages'][0]['content']
+        for k, v in completion.signature.output_fields.items():
+            if k != 'rationale':
+                text_out = text_out + f"{v.json_schema_extra['prefix']}"
+            text_out: str = text_out + f" {completion.__getattr__(k)}\n\n"
+            return text_out
+
+    def inspect_history(self, n: int = 1, skip: int = 0):
+        """Prints the last n prompts and their completions.
+        """
+
+        last_prompt = None
+        printed = []
+        n = n + skip
+
+        for x in reversed(self.history[-100:]):
+            prompt = self._render_completion(x) 
+            if prompt != last_prompt:
+                printed.append(prompt)
+            last_prompt = prompt
+            if len(printed) >= n:
+                break
+
+        printing_value = ""
+        for idx, prompt in enumerate(reversed(printed)):
+            # skip the first `skip` prompts
+            if (n - idx - 1) < skip:
+                continue
+            printing_value += "\n\n\n"
+            printing_value += prompt
+            printing_value += "\n\n\n"
+
+        print(printing_value)
+        return printing_value
 
 def cached_request(cls: BaseBackend, **kwargs) -> Completions:
     hashed = joblib.hash(cls.model_dump_json())

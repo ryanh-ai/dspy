@@ -2,6 +2,7 @@ import logging
 import typing as t
 
 import regex
+import re
 from pydantic import Field
 
 from dspy.modeling.backends.base import BaseBackend
@@ -26,7 +27,8 @@ except ImportError:
 def passages_to_text(passages: t.Iterable[str]) -> str:
     passages = list(passages)
     if len(passages) == 0:
-        raise ValueError("Empty passages passed to format handler.")
+        return "None"
+        #raise ValueError("Empty passages passed to format handler.")
 
     if len(passages) == 1:
         return passages[0]
@@ -75,6 +77,15 @@ class TextBackend(BaseBackend):
     api_key: t.Optional[str] = Field(default=None)
     api_base: t.Optional[str] = Field(default=None)
     params: dict[str, t.Any] = Field(default_factory=dict)
+
+    ## FIX to make MIPROv2 work due to it accessing kwargs variables
+    @property
+    def kwargs(self) -> dict[str, t.Any]:
+        return self.params
+
+    @kwargs.setter
+    def kwargs(self, value: dict[str, t.Any]):
+        self.params = value
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -152,8 +163,8 @@ class TextBackend(BaseBackend):
                 field.json_schema_extra["prefix"].replace(" ", "\\s").replace("(", "\\(").replace(")", "\\)")
             )
 
-            search_string = f"(?s)\n\n{target_prefix}?(.+?)\n\n(?:{stop_prefixes})"
-            matches = regex.findall(search_string, text)
+            search_string = rf"(?s)\n{{1,2}}{target_prefix}?(.+?)\n{{1,2}}(?:{stop_prefixes})"
+            matches = re.findall(search_string, text)
 
             non_generated_count = 1 + sum([name in demo for demo in demos])
             matches = [] if non_generated_count >= len(matches) else matches[non_generated_count:]
