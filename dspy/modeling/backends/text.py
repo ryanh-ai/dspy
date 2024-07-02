@@ -3,6 +3,7 @@ import typing as t
 
 import regex
 import re
+import backoff
 from pydantic import Field
 
 from dspy.modeling.backends.base import BaseBackend
@@ -12,7 +13,7 @@ from dspy.signatures.signature import Signature, SignatureMeta
 logger = logging.getLogger(__name__)
 
 litellm_logger = logging.getLogger("LiteLLM")
-litellm_logger.setLevel(logging.WARNING)
+litellm_logger.setLevel(logging.ERROR)
 
 try:
     import litellm
@@ -23,7 +24,14 @@ try:
 except ImportError:
     _missing_litellm = True
 
-
+def backoff_hdlr(details):
+    """Handler from https://pypi.org/project/backoff/"""
+    print(
+        "Backing off {wait:0.1f} seconds after {tries} tries "
+        "calling function {target} with kwargs "
+        "{kwargs}".format(**details),
+    )
+    
 def passages_to_text(passages: t.Iterable[str]) -> str:
     passages = list(passages)
     if len(passages) == 0:
@@ -55,6 +63,7 @@ def default_format_handler(x: str) -> str:
 
 DEFAULT_FORMAT_HANDLERS = {
     "context": passages_to_text,
+    ""
     "passages": passages_to_text,
     "answers": format_answers,
 }
@@ -209,6 +218,12 @@ class TextBackend(BaseBackend):
 
         return options
 
+    @backoff.on_exception(
+        backoff.expo,
+        litellm.RateLimitError,
+        max_time=1000,
+        on_backoff=backoff_hdlr,
+    )
     def make_request(self, **kwargs) -> t.Any:
         return completion(model=self.model, api_key=self.api_key, api_base=self.api_base, **kwargs)
 
