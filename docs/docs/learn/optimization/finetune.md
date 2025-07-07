@@ -1,92 +1,40 @@
-# Fine-tuning with DSPy
+# Fine-tuning Models in DSPy
 
-DSPy provides a unified interface for fine-tuning language models across different providers. This guide explains how to use DSPy's fine-tuning capabilities.
+DSPy provides a unified interface for fine-tuning language models across different providers. This guide explains how to use DSPy's fine-tuning capabilities with various model providers.
 
-## Supported Providers
+## Overview
 
-DSPy currently supports fine-tuning with the following providers:
+Fine-tuning allows you to adapt pre-trained language models to your specific tasks and data. DSPy supports fine-tuning with the following providers:
 
-- **OpenAI**: Fine-tune OpenAI models like GPT-3.5
-- **Bedrock**: Fine-tune Amazon Bedrock models like Claude, Llama, Titan, and Cohere
+- OpenAI
+- AWS Bedrock (including Amazon Nova models)
+- Databricks
 
-## Basic Fine-tuning
+## Basic Usage
 
-Here's a simple example of fine-tuning an OpenAI model:
+To fine-tune a model in DSPy, you need:
+
+1. A base model to fine-tune
+2. Training data in the appropriate format
+3. Provider-specific configuration
+
+Here's a basic example:
 
 ```python
 import dspy
 from dspy.clients.utils_finetune import TrainDataFormat
 
-# Create an LM with OpenAI
-lm = dspy.LM("openai/gpt-3.5-turbo")
+# Enable experimental features (required for fine-tuning)
+dspy.settings.experimental = True
 
-# Prepare training data
+# Create an LM instance with the model you want to fine-tune
+lm = dspy.LM(model="bedrock/amazon.nova-lite-v1")
+
+# Prepare your training data
 train_data = [
     {
         "messages": [
-            {"role": "user", "content": "What is the capital of France?"},
-            {"role": "assistant", "content": "The capital of France is Paris."}
-        ]
-    },
-    # Add more examples...
-]
-
-# Start fine-tuning
-job = lm.finetune(
-    train_data=train_data,
-    train_data_format=TrainDataFormat.CHAT
-)
-
-# Wait for the job to complete (this happens automatically in finetune)
-print(f"Fine-tuned model: {job.model}")
-```
-
-## Fine-tuning with Amazon Bedrock
-
-DSPy also supports fine-tuning models on Amazon Bedrock. This includes models from Anthropic (Claude), Meta (Llama), Amazon (Titan), and Cohere.
-
-### Prerequisites
-
-1. Install the required packages:
-   ```
-   pip install dspy boto3
-   ```
-
-2. Set up AWS credentials:
-   - Configure AWS CLI with `aws configure`
-   - Or set environment variables:
-     ```
-     export AWS_ACCESS_KEY_ID=your_access_key
-     export AWS_SECRET_ACCESS_KEY=your_secret_key
-     export AWS_REGION=your_region
-     ```
-
-3. Set up S3 bucket and IAM role:
-   - Create an S3 bucket for training data
-   - Create an IAM role with permissions for Bedrock and S3
-   - Set environment variables:
-     ```
-     export DSPY_BEDROCK_S3_BUCKET=your_bucket_name
-     export DSPY_BEDROCK_ROLE_ARN=your_role_arn
-     ```
-
-### Example
-
-```python
-import dspy
-from dspy.clients.bedrock import BedrockProvider
-from dspy.clients.utils_finetune import TrainDataFormat
-
-# Create a Bedrock LM
-lm = dspy.LM(
-    model="bedrock/anthropic.claude-3-sonnet-20240229",
-    provider=BedrockProvider()
-)
-
-# Prepare training data
-train_data = [
-    {
-        "messages": [
+            {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": "What is the capital of France?"},
             {"role": "assistant", "content": "The capital of France is Paris."}
         ]
@@ -99,95 +47,211 @@ job = lm.finetune(
     train_data=train_data,
     train_data_format=TrainDataFormat.CHAT,
     train_kwargs={
-        "epochCount": 3,
-        "batchSize": 4,
-        "learningRate": 1e-5,
-        # Optional: specify S3 path directly
-        # "s3_path": "s3://your-bucket/your-prefix/",
+        # Provider-specific parameters
+        "s3_path": "s3://your-bucket/fine-tuning-data/",
+        "aws_profile": "default",  # Optional
+        "hyperparameters": {
+            "epochCount": 3,
+            "batchSize": 4,
+            "learningRate": 1e-5
+        }
     }
 )
 
-# Check the status
-print(f"Fine-tuning job status: {job.status()}")
+# Wait for the job to complete
+finetuned_model = job.result()
 
-# If successful, deploy an endpoint
-if job.status() == "succeeded":
-    endpoint_name = job.start_endpoint()
-    print(f"Endpoint deployed: {endpoint_name}")
-    
-    # When done, stop the endpoint
-    job.stop_endpoint()
-```
-
-### Supported Hyperparameters
-
-The Bedrock provider supports the following hyperparameters:
-
-- `epochCount`: Number of training epochs
-- `batchSize`: Batch size for training
-- `learningRate`: Learning rate for training
-
-Different model families may have different default values and constraints for these hyperparameters.
-
-### Model Format Conversion
-
-The Bedrock provider automatically converts your training data to the format expected by each model family:
-
-- **Anthropic Claude**: Uses the standard chat format with messages
-- **Meta Llama**: Uses a conversations format
-- **Amazon Titan**: Converts to inputText/outputText format
-- **Cohere**: Converts to prompt/completion format
-
-## Advanced Options
-
-### Custom S3 Path
-
-You can specify a custom S3 path for your training data:
-
-```python
-job = lm.finetune(
-    train_data=train_data,
-    train_data_format=TrainDataFormat.CHAT,
-    train_kwargs={
-        "s3_path": "s3://your-bucket/your-prefix/",
-    }
-)
-```
-
-### Endpoint Management
-
-You can start and stop endpoints for your fine-tuned models:
-
-```python
-# Start an endpoint
-endpoint_name = job.start_endpoint()
-
-# Stop the endpoint when done
-job.stop_endpoint()
+# Use the fine-tuned model
+finetuned_lm = dspy.LM(model=finetuned_model)
+response = finetuned_lm("What is the capital of Germany?")
+print(response)
 ```
 
 ## Data Formats
 
-DSPy supports the following training data formats:
+DSPy supports two main data formats for fine-tuning:
 
-- `TrainDataFormat.CHAT`: For chat-based models (recommended)
-- `TrainDataFormat.COMPLETION`: For completion-based models
+### Chat Format
 
-## Monitoring and Cancellation
+For chat models, use the `TrainDataFormat.CHAT` format:
 
-You can monitor the status of your fine-tuning job:
+```python
+chat_data = [
+    {
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "Hello, how are you?"},
+            {"role": "assistant", "content": "I'm doing great, thank you!"}
+        ]
+    }
+]
+```
+
+### Completion Format
+
+For completion models, use the `TrainDataFormat.COMPLETION` format:
+
+```python
+completion_data = [
+    {
+        "prompt": "What is the capital of France?",
+        "completion": "Paris is the capital of France."
+    }
+]
+```
+
+## Provider-Specific Configuration
+
+### OpenAI
+
+For OpenAI models, you can specify hyperparameters like:
+
+```python
+train_kwargs = {
+    "n_epochs": 3,
+    "batch_size": 4,
+    "learning_rate_multiplier": 1.0
+}
+```
+
+### AWS Bedrock
+
+For AWS Bedrock models (including Nova Lite and Nova Micro models), you need to provide:
+
+```python
+train_kwargs = {
+    "s3_path": "s3://your-bucket/fine-tuning-data/",  # Required
+    "aws_profile": "default",  # Optional, uses default credentials if not provided
+    "hyperparameters": {
+        "epochCount": 3,
+        "batchSize": 4,
+        "learningRate": 1e-5
+    },
+    "job_name": "my-finetune-job",  # Optional
+    "start_endpoint": True  # Optional, whether to start an endpoint after training
+}
+```
+
+When using Bedrock, you can include a system prompt in your training data:
+
+```python
+chat_data = [
+    {
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant specialized in geography."},
+            {"role": "user", "content": "What is the capital of France?"},
+            {"role": "assistant", "content": "The capital of France is Paris."}
+        ]
+    }
+]
+```
+
+### Databricks
+
+For Databricks models, you need to provide:
+
+```python
+train_kwargs = {
+    "train_data_path": "/Volumes/catalog/schema/volume/path",  # Required
+    "register_to": "catalog.schema.model_name",  # Required
+    "task_type": "CHAT_COMPLETION",  # or "INSTRUCTION_FINETUNE"
+    "databricks_host": "https://your-workspace.cloud.databricks.com",  # Optional
+    "databricks_token": "your-token",  # Optional
+    "skip_deploy": False  # Optional
+}
+```
+
+## Managing Fine-tuning Jobs
+
+### Checking Job Status
+
+You can check the status of a fine-tuning job:
 
 ```python
 status = job.status()
-print(f"Current status: {status}")
+print(f"Job status: {status}")
 ```
 
-And cancel it if needed:
+### Cancelling a Job
+
+To cancel a running fine-tuning job:
 
 ```python
 job.cancel()
 ```
 
-## Next Steps
+### Managing Endpoints (Bedrock)
 
-For more advanced fine-tuning techniques, check out the DSPy tutorials on fine-tuning and the BetterTogether optimizer, which combines fine-tuning with prompt optimization.
+For AWS Bedrock, you can start and stop endpoints for your fine-tuned models:
+
+```python
+# Start an endpoint
+job.start_endpoint()
+
+# Stop an endpoint
+job.stop_endpoint()
+```
+
+## Default Values
+
+If not specified, DSPy will use reasonable defaults for hyperparameters:
+
+- For Bedrock:
+  - `epochCount`: 3
+  - `batchSize`: 4
+  - `learningRate`: 1e-5
+
+## Advanced Usage with BootstrapFinetune
+
+For more advanced fine-tuning, DSPy provides the `BootstrapFinetune` optimizer, which can fine-tune models within a DSPy program:
+
+```python
+import dspy
+from dspy.teleprompt import BootstrapFinetune
+
+# Define your program
+class SimpleQA(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        self.generate_answer = dspy.ChainOfThought("question -> answer")
+
+    def forward(self, question):
+        return self.generate_answer(question=question)
+
+# Create instances
+base_lm = dspy.LM("bedrock/amazon.nova-lite-v1")
+program = SimpleQA()
+
+# Attach the LM to the program
+for predictor in program.predictors():
+    predictor.lm = base_lm
+
+# Create the optimizer
+optimizer = BootstrapFinetune(
+    train_kwargs={
+        "s3_path": "s3://your-bucket/fine-tuning-data/",
+        "aws_profile": "default",
+        "hyperparameters": {
+            "epochCount": 3,
+            "batchSize": 4,
+            "learningRate": 1e-5
+        }
+    }
+)
+
+# Compile the program
+optimized_program = optimizer.compile(
+    student=program,
+    trainset=train_examples
+)
+
+# Use the optimized program
+result = optimized_program(question="What is the capital of France?")
+print(result.answer)
+```
+
+## Conclusion
+
+Fine-tuning models in DSPy provides a powerful way to adapt language models to your specific tasks. By leveraging DSPy's unified interface, you can easily fine-tune models across different providers without changing your code structure.
+
+For more examples and advanced usage, check out the tutorials in the DSPy documentation.

@@ -1,127 +1,140 @@
 """
-Example of fine-tuning a model using the Bedrock provider.
+Example script demonstrating how to fine-tune a model using AWS Bedrock.
 
-Prerequisites:
-1. Install the required packages:
-   pip install dspy boto3
+This script shows how to:
+1. Prepare training data
+2. Configure the fine-tuning job
+3. Start the fine-tuning process
+4. Monitor the job status
+5. Use the fine-tuned model
 
-2. Set up AWS credentials:
-   - Configure AWS CLI with `aws configure`
-   - Or set environment variables:
-     export AWS_ACCESS_KEY_ID=your_access_key
-     export AWS_SECRET_ACCESS_KEY=your_secret_key
-     export AWS_REGION=your_region
-
-3. Set up S3 bucket and IAM role:
-   - Create an S3 bucket for training data
-   - Create an IAM role with permissions for Bedrock and S3
-   - Set environment variables:
-     export DSPY_BEDROCK_S3_BUCKET=your_bucket_name
-     export DSPY_BEDROCK_ROLE_ARN=your_role_arn
+Note: This script requires AWS credentials with appropriate permissions.
 """
 
 import os
+import time
 import dspy
-from dspy.clients.bedrock import BedrockProvider
 from dspy.clients.utils_finetune import TrainDataFormat
 
-# Create a simple classification module
-class SimpleClassifier(dspy.Module):
-    def __init__(self):
-        super().__init__()
-        self.classify = dspy.Predict("text -> category")
-        
-    def forward(self, text):
-        return self.classify(text=text)
+# Enable experimental features (required for fine-tuning)
+dspy.settings.experimental = True
 
-def main():
-    # Check if boto3 is installed
-    try:
-        import boto3
-    except ImportError:
-        print("boto3 is required for this example. Install it with `pip install boto3`.")
-        return
-        
-    # Check if AWS credentials are set
-    if not (os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY")):
-        print("AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables.")
-        return
-        
-    # Check if S3 bucket and IAM role are set
-    if not os.environ.get("DSPY_BEDROCK_S3_BUCKET"):
-        print("S3 bucket not set. Please set DSPY_BEDROCK_S3_BUCKET environment variable.")
-        return
-        
-    if not os.environ.get("DSPY_BEDROCK_ROLE_ARN"):
-        print("IAM role not set. Please set DSPY_BEDROCK_ROLE_ARN environment variable.")
-        return
+def prepare_training_data():
+    """Prepare sample training data for fine-tuning."""
     
-    # Create a Bedrock LM
-    lm = dspy.LM(
-        model="bedrock/anthropic.claude-3-sonnet-20240229",
-        provider=BedrockProvider()
-    )
-    
-    # Set the LM as the default
-    dspy.settings.configure(lm=lm)
-    
-    # Create training data
+    # Create a simple dataset for a Q&A task
     train_data = [
         {
             "messages": [
-                {"role": "user", "content": "Classify this text: 'I love this product!'"},
-                {"role": "assistant", "content": "category: positive"}
+                {"role": "system", "content": "You are a helpful assistant specialized in geography."},
+                {"role": "user", "content": "What is the capital of France?"},
+                {"role": "assistant", "content": "The capital of France is Paris."}
             ]
         },
         {
             "messages": [
-                {"role": "user", "content": "Classify this text: 'This is terrible.'"},
-                {"role": "assistant", "content": "category: negative"}
+                {"role": "system", "content": "You are a helpful assistant specialized in geography."},
+                {"role": "user", "content": "What is the capital of Germany?"},
+                {"role": "assistant", "content": "The capital of Germany is Berlin."}
             ]
         },
         {
             "messages": [
-                {"role": "user", "content": "Classify this text: 'It's okay I guess.'"},
-                {"role": "assistant", "content": "category: neutral"}
+                {"role": "system", "content": "You are a helpful assistant specialized in geography."},
+                {"role": "user", "content": "What is the capital of Italy?"},
+                {"role": "assistant", "content": "The capital of Italy is Rome."}
             ]
         },
-        # Add more examples as needed
+        {
+            "messages": [
+                {"role": "system", "content": "You are a helpful assistant specialized in geography."},
+                {"role": "user", "content": "What is the capital of Spain?"},
+                {"role": "assistant", "content": "The capital of Spain is Madrid."}
+            ]
+        },
+        {
+            "messages": [
+                {"role": "system", "content": "You are a helpful assistant specialized in geography."},
+                {"role": "user", "content": "What is the capital of Portugal?"},
+                {"role": "assistant", "content": "The capital of Portugal is Lisbon."}
+            ]
+        }
     ]
     
-    # Start fine-tuning
-    print("Starting fine-tuning...")
+    return train_data
+
+def main():
+    # Check if AWS credentials are available
+    if not os.environ.get("AWS_ACCESS_KEY_ID") and not os.environ.get("AWS_PROFILE"):
+        print("AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or AWS_PROFILE.")
+        return
+    
+    # Get S3 bucket from environment variable or use a default
+    s3_bucket = os.environ.get("S3_BUCKET")
+    if not s3_bucket:
+        print("S3_BUCKET environment variable not set. Please set it to your S3 bucket name.")
+        return
+    
+    # Prepare S3 path
+    s3_path = f"s3://{s3_bucket}/dspy-finetune/"
+    
+    # Get AWS profile from environment variable or use None
+    aws_profile = os.environ.get("AWS_PROFILE")
+    
+    print("Preparing training data...")
+    train_data = prepare_training_data()
+    
+    print(f"Creating LM with Nova Lite model...")
+    lm = dspy.LM(model="bedrock/amazon.nova-lite-v1")
+    
+    print("Starting fine-tuning job...")
     job = lm.finetune(
         train_data=train_data,
         train_data_format=TrainDataFormat.CHAT,
         train_kwargs={
-            "epochCount": 3,
-            "batchSize": 4,
-            "learningRate": 1e-5,
-            # Optional: specify S3 path directly
-            # "s3_path": "s3://your-bucket/your-prefix/",
+            "s3_path": s3_path,
+            "aws_profile": aws_profile,
+            "hyperparameters": {
+                "epochCount": 3,
+                "batchSize": 4,
+                "learningRate": 1e-5
+            },
+            "start_endpoint": True  # Start an endpoint after training
         }
     )
     
-    # Wait for the job to complete (this is already done in the finetune method)
-    print(f"Fine-tuning job status: {job.status()}")
+    print(f"Fine-tuning job started with ID: {job.job_id}")
+    print("Monitoring job status...")
     
-    if job.status() == "succeeded":
-        print(f"Fine-tuned model ARN: {job.model_arn}")
+    # Monitor job status
+    while True:
+        status = job.status()
+        print(f"Current status: {status}")
         
-        # Start an endpoint for the fine-tuned model
-        print("Starting endpoint...")
-        endpoint_name = job.start_endpoint()
-        print(f"Endpoint started: {endpoint_name}")
+        if status in [dspy.clients.utils_finetune.TrainingStatus.succeeded, 
+                     dspy.clients.utils_finetune.TrainingStatus.failed,
+                     dspy.clients.utils_finetune.TrainingStatus.cancelled]:
+            break
+        
+        time.sleep(60)  # Check every minute
+    
+    if status == dspy.clients.utils_finetune.TrainingStatus.succeeded:
+        print("Fine-tuning completed successfully!")
+        
+        # Get the fine-tuned model
+        finetuned_model = job.result()
+        print(f"Fine-tuned model ID: {finetuned_model}")
         
         # Use the fine-tuned model
-        # Note: In a real application, you would create a new LM with the fine-tuned model
+        finetuned_lm = dspy.LM(model=finetuned_model)
+        response = finetuned_lm("What is the capital of Japan?")
+        print(f"Response from fine-tuned model: {response}")
         
         # Stop the endpoint when done
-        print("Stopping endpoint...")
+        print("Stopping the endpoint...")
         job.stop_endpoint()
-        print("Endpoint stopped")
     else:
-        print(f"Fine-tuning failed with status: {job.status()}")
+        print(f"Fine-tuning failed with status: {status}")
 
 if __name__ == "__main__":
     main()

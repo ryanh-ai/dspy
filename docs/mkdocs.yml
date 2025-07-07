@@ -24,6 +24,7 @@ nav:
         - DSPy Optimization:
             - Optimization Overview: learn/optimization/overview.md
             - Optimizers: learn/optimization/optimizers.md
+            - Fine-tuning: learn/optimization/finetune.md
     - Tutorials:
         - Tutorials Overview: tutorials/index.md
         - Build AI Programs with DSPy:
