@@ -11,6 +11,11 @@ from dspy.clients.cache import Cache
 from dspy.clients.embedding import Embedder
 from dspy.clients.lm import LM
 from dspy.clients.provider import Provider, TrainingJob
+try:
+    from dspy.clients.bedrock import BedrockProvider
+except ImportError:
+    # If boto3 is not installed, BedrockProvider will not be available
+    BedrockProvider = None
 
 logger = logging.getLogger(__name__)
 
@@ -112,4 +117,5 @@ __all__ = [
     "enable_litellm_logging",
     "disable_litellm_logging",
     "configure_cache",
+    "BedrockProvider",
 ]
