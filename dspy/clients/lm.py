@@ -273,8 +273,12 @@ class LM(BaseLM):
             job.set_result(err)
 
     def infer_provider(self) -> Provider:
+        from dspy.clients import BedrockProvider
+        
         if OpenAIProvider.is_provider_model(self.model):
             return OpenAIProvider()
+        elif BedrockProvider is not None and BedrockProvider.is_provider_model(self.model):
+            return BedrockProvider()
         return Provider()
 
     def dump_state(self):
